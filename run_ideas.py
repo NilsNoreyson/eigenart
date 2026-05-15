@@ -585,11 +585,11 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
 
-def run_server(port):
+def run_server(host, port):
     os.chdir(BASE_DIR)
     handler = IdeaHandler
-    with socketserver.ThreadingTCPServer((HOST, port), handler) as httpd:
-        print(f'Serving Rural Idea Map at http://{HOST}:{port}')
+    with socketserver.ThreadingTCPServer((host, port), handler) as httpd:
+        print(f'Serving Rural Idea Map at http://{host}:{port}')
         print(f'Database file: {DB_FILE}')
         print('Press Ctrl+C to stop.')
         try:
@@ -600,6 +600,7 @@ def run_server(port):
 
 def main():
     parser = argparse.ArgumentParser(description='Run the Rural Idea Map app.')
+    parser.add_argument('--host', default=HOST, help='Host interface to bind the web server to (use 0.0.0.0 for public access)')
     parser.add_argument('--port', type=int, default=PORT, help='Port to run the web server on')
     parser.add_argument('--export', nargs='?', const='ideas-export.json', help='Export the JSON database to a file')
     parser.add_argument('--import', dest='import_file', help='Import the JSON database from a file')
@@ -629,7 +630,7 @@ def main():
     if not os.path.exists(DB_FILE):
         save_db([])
 
-    run_server(args.port)
+    run_server(args.host, args.port)
 
 
 if __name__ == '__main__':
