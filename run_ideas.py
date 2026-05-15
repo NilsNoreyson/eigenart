@@ -55,7 +55,13 @@ INDEX_HTML = """<!DOCTYPE html>
         <canvas id="idea-canvas"></canvas>
         <div class="canvas-caption">
           <strong>Action radius</strong>
-          <span>Distance shows age, size shows relevance, direction shows idea vector.</span>
+          <span>Distance shows age, size shows relevance, direction shows idea vector. Click a bubble to read the idea fullscreen.</span>
+        </div>
+        <div id="idea-modal" class="idea-modal hidden">
+          <div class="idea-modal-card">
+            <button id="idea-modal-close" class="idea-modal-close" aria-label="Close">×</button>
+            <div id="idea-modal-text" class="idea-modal-text"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -85,6 +91,11 @@ button:hover { transform: translateY(-1px); filter: brightness(1.05); }
 #idea-canvas { width: 100%; height: 100%; display: block; }
 .canvas-caption { position: absolute; left: 24px; bottom: 24px; background: rgba(2, 7, 16, 0.82); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 16px 18px; max-width: 320px; }
 .canvas-caption strong { display: block; margin-bottom: 6px; }
+.idea-modal { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(2, 7, 16, 0.88); padding: 18px; z-index: 20; }
+.idea-modal.hidden { display: none; }
+.idea-modal-card { width: min(92vw, 760px); max-height: min(88vh, 520px); background: rgba(10, 18, 38, 0.96); border: 1px solid rgba(255,255,255,0.14); border-radius: 24px; padding: 28px; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35); overflow: auto; }
+.idea-modal-close { position: absolute; right: 18px; top: 18px; width: 42px; height: 42px; border: none; border-radius: 50%; background: rgba(255,255,255,0.12); color: #eef4ff; font-size: 1.6rem; cursor: pointer; }
+.idea-modal-text { white-space: pre-wrap; line-height: 1.8; color: #f3f7ff; font-size: 1.05rem; }
 @media (max-width: 900px) { .app-shell { grid-template-columns: 1fr; } .panel-left { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.08); } .canvas-container { height: calc(100vh - 420px); } }
 """
 
@@ -95,7 +106,11 @@ const input = document.getElementById('idea-input');
 const importButton = document.getElementById('import-button');
 const downloadButton = document.getElementById('download-button');
 const status = document.getElementById('status');
+const modal = document.getElementById('idea-modal');
+const modalText = document.getElementById('idea-modal-text');
+const modalClose = document.getElementById('idea-modal-close');
 let ideas = [];
+let bubbles = [];
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -234,6 +249,7 @@ function draw() {
   drawBackground(width, height);
 
   const center = { x: width / 2, y: height / 2 };
+  bubbles = [];
   ideas.forEach(item => {
     const age = Math.min(1, ((Date.now() / 1000) - new Date(item.created_at).getTime() / 1000) / 3600);
     const distance = 80 + age * (Math.min(width, height) / 2 - 140);
@@ -241,6 +257,8 @@ function draw() {
     const x = center.x + dx * distance;
     const y = center.y + dy * distance;
     const radius = 18 + item.relevance * 48;
+
+    bubbles.push({ x, y, radius, item });
 
     const bubble = ctx.createRadialGradient(x - radius * 0.2, y - radius * 0.2, 4, x, y, radius);
     bubble.addColorStop(0, 'rgba(255, 255, 255, 0.96)');
@@ -261,6 +279,46 @@ function draw() {
     ctx.fillText(label, x, y);
   });
 }
+
+function getCanvasPointerPosition(event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left) * (canvas.width / rect.width),
+    y: (event.clientY - rect.top) * (canvas.height / rect.height)
+  };
+}
+
+function openIdeaModal(text) {
+  modalText.textContent = text;
+  modal.classList.remove('hidden');
+}
+
+function closeIdeaModal() {
+  modal.classList.add('hidden');
+}
+
+function handleCanvasClick(event) {
+  const { x, y } = getCanvasPointerPosition(event);
+  const clicked = bubbles.find(b => {
+    const dx = x - b.x;
+    const dy = y - b.y;
+    return Math.sqrt(dx * dx + dy * dy) <= b.radius;
+  });
+  if (clicked) {
+    openIdeaModal(clicked.item.text);
+  }
+}
+
+modalClose.addEventListener('click', closeIdeaModal);
+modal.addEventListener('click', event => {
+  if (event.target === modal) closeIdeaModal();
+});
+
+canvas.addEventListener('click', handleCanvasClick);
+
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeIdeaModal();
+});
 
 window.addEventListener('resize', resizeCanvas);
 fetchIdeas().then(resizeCanvas);
