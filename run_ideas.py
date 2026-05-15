@@ -308,7 +308,7 @@ DOCS_STEP_1_HTML = """<!DOCTYPE html>
   <h1>Step 1: Start the App</h1>
   <p>First create a Python virtual environment in the project folder and install the minimal requirements:</p>
   <pre><code>python -m venv .venv
-.venv\Scripts\Activate.ps1
+.venv/Scripts/Activate.ps1
 pip install -r requirements.txt</code></pre>
   <p>Then run the app from the single Python file:</p>
   <pre><code>python run_ideas.py</code></pre>
