@@ -662,7 +662,7 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
             save_db(ideas)
             self.send_json({'status': 'ok'})
             return
-            if path == '/api/import':
+        if path == '/api/import':
             try:
                 payload = json.loads(body)
                 ideas = payload if isinstance(payload, list) else payload.get('ideas')
@@ -683,6 +683,12 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
             return
         self.send_response(404)
         self.end_headers()
+
+
+def shutdown_server(server, restart=False):
+    global RESTART_AFTER_SHUTDOWN
+    RESTART_AFTER_SHUTDOWN = restart
+    server.shutdown()
 
 
 def run_server(host, port):
@@ -731,6 +737,14 @@ def main():
         save_db([])
 
     run_server(args.host, args.port)
+
+    if RESTART_AFTER_SHUTDOWN:
+        print('Restarting from latest main commit...')
+        try:
+            subprocess.run(GIT_PULL_COMMAND, cwd=BASE_DIR, check=True)
+        except Exception as err:
+            print('Git pull failed:', err)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 if __name__ == '__main__':
