@@ -13,6 +13,8 @@ import json
 import os
 import socketserver
 import subprocess
+import sys
+import threading
 import urllib.parse
 from datetime import datetime
 
@@ -21,6 +23,8 @@ DB_FILE = os.path.join(BASE_DIR, 'ideas.json')
 DOCS_DIR = os.path.join(BASE_DIR, 'docs')
 HOST = '127.0.0.1'
 PORT = 5000
+RESTART_AFTER_SHUTDOWN = False
+GIT_PULL_COMMAND = ['git', 'pull', 'origin', 'main']
 
 INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -41,6 +45,8 @@ INDEX_HTML = """<!DOCTYPE html>
           <button type="submit">Send</button>
           <button type="button" id="import-button">Import JSON</button>
           <button type="button" id="download-button">Export JSON</button>
+          <button type="button" id="shutdown-button">Shutdown</button>
+          <button type="button" id="restart-button">Restart</button>
         </div>
       </form>
       <div class="help-box">
@@ -105,6 +111,8 @@ const form = document.getElementById('idea-form');
 const input = document.getElementById('idea-input');
 const importButton = document.getElementById('import-button');
 const downloadButton = document.getElementById('download-button');
+const shutdownButton = document.getElementById('shutdown-button');
+const restartButton = document.getElementById('restart-button');
 const status = document.getElementById('status');
 const modal = document.getElementById('idea-modal');
 const modalText = document.getElementById('idea-modal-text');
@@ -212,6 +220,26 @@ importButton.addEventListener('click', () => {
   inputEl.click();
 });
 
+shutdownButton.addEventListener('click', () => {
+  fetch('/shutdown', { method: 'POST' })
+    .then(response => response.json())
+    .then(() => {
+      showStatus('Shutting down...');
+      setTimeout(() => { window.close(); }, 500);
+    })
+    .catch(() => showStatus('Shutdown failed.', true));
+});
+
+restartButton.addEventListener('click', () => {
+  fetch('/shutdown?restart=1', { method: 'POST' })
+    .then(response => response.json())
+    .then(() => {
+      showStatus('Restarting...');
+      setTimeout(() => { window.location.reload(); }, 700);
+    })
+    .catch(() => showStatus('Restart failed.', true));
+});
+
 function drawBackground(width, height) {
   ctx.save();
   const grd = ctx.createRadialGradient(width * 0.25, height * 0.2, 10, width / 2, height / 2, Math.max(width, height));
@@ -295,6 +323,14 @@ function openIdeaModal(text) {
 
 function closeIdeaModal() {
   modal.classList.add('hidden');
+}
+
+function getCanvasPointerPosition(event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top
+  };
 }
 
 function handleCanvasClick(event) {
@@ -626,7 +662,7 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
             save_db(ideas)
             self.send_json({'status': 'ok'})
             return
-        if path == '/api/import':
+            if path == '/api/import':
             try:
                 payload = json.loads(body)
                 ideas = payload if isinstance(payload, list) else payload.get('ideas')
@@ -638,6 +674,12 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b'Failed to import database')
+            return
+        if path == '/shutdown':
+            params = urllib.parse.parse_qs(parsed.query)
+            restart = params.get('restart', ['0'])[0] == '1'
+            self.send_json({'status': 'shutting down', 'restart': restart})
+            threading.Thread(target=shutdown_server, args=(self.server, restart), daemon=True).start()
             return
         self.send_response(404)
         self.end_headers()
