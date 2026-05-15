@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Step 4: Optional IPFS Backup</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; margin: 2rem; background: #051022; color: #e6eefb; }
+    a { color: #85b4ff; }
+    pre { background: rgba(255,255,255,0.06); padding: 1rem; border-radius: 12px; overflow-x: auto; }
+    code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Step 4: Optional IPFS Backup</h1>
+  <p>If you have IPFS installed and a local daemon running, export or import the database using IPFS.</p>
+  <pre><code>python run_ideas.py --export-ipfs
+python run_ideas.py --import-ipfs Qm...hash</code></pre>
+  <p>If IPFS is unavailable, the app still works with the local <code>ideas.json</code> file.</p>
+  <p><a href="index.html">Back to docs home</a></p>
+</body>
+</html>

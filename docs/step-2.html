@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Step 2: Export and Import</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; margin: 2rem; background: #051022; color: #e6eefb; }
+    a { color: #85b4ff; }
+    pre { background: rgba(255,255,255,0.06); padding: 1rem; border-radius: 12px; overflow-x: auto; }
+    code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Step 2: Export and Import</h1>
+  <p>The app uses a single JSON file: <code>ideas.json</code>.</p>
+  <p>Export the database from the command line:</p>
+  <pre><code>python run_ideas.py --export exported-ideas.json</code></pre>
+  <p>Import a saved file:</p>
+  <pre><code>python run_ideas.py --import exported-ideas.json</code></pre>
+  <p>You can also import the same JSON file from the browser interface.</p>
+  <p><a href="index.html">Back to docs home</a></p>
+</body>
+</html>
