@@ -1,249 +1,410 @@
 #!/usr/bin/env python3
-"""Single-file idea sharing web app with a JSON database and generated docs."""
+"""
+Self-contained Rural Idea Map app with optional IPFS support.
+
+The script serves a local web app and keeps all idea data in a single JSON file.
+It also generates documentation under docs/ automatically.
+"""
 
 import argparse
-import datetime
 import hashlib
 import http.server
 import json
 import os
 import socketserver
-import sys
+import subprocess
 import urllib.parse
+from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, "ideas.json")
-DOCS_DIR = os.path.join(BASE_DIR, "docs")
+DB_FILE = os.path.join(BASE_DIR, 'ideas.json')
+DOCS_DIR = os.path.join(BASE_DIR, 'docs')
+HOST = '127.0.0.1'
 PORT = 5000
 
-INDEX_HTML = """<!doctype html>
+INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Rural Idea Map</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="page">
-    <header>
+  <main class="app-shell">
+    <section class="panel panel-left">
       <h1>Rural Idea Map</h1>
-      <p>Type an idea and press Enter to send it into the map.</p>
-      <p>Each bubble is a thought: distance = age, size = relevance, direction = idea vector.</p>
-    </header>
-
-    <section class="form-panel">
+      <p>Share your latest thought by typing it and pressing Enter. Each idea becomes a bubble on the map.</p>
       <form id="idea-form">
-        <input id="idea-input" name="idea" type="text" placeholder="Enter your latest thought..." autocomplete="off" />
-        <button type="submit">Share</button>
+        <textarea id="idea-input" name="idea" rows="4" placeholder="Enter your thought..." autocomplete="off"></textarea>
+        <div class="actions">
+          <button type="submit">Send</button>
+          <button type="button" id="import-button">Import JSON</button>
+          <button type="button" id="download-button">Export JSON</button>
+        </div>
       </form>
-      <div class="notes">
-        <p>Database file: <code>ideas.json</code></p>
-        <p>Export with <code>python run_ideas.py --export</code>, import with <code>python run_ideas.py --import filename.json</code>.</p>
+      <div class="help-box">
+        <p>Database: <code>ideas.json</code></p>
+        <p>Optionally use IPFS from the command line once your local IPFS daemon is running.</p>
+        <p><a href="/docs/index.html">Read the generated docs</a></p>
+      </div>
+      <div id="status" class="status"></div>
+    </section>
+    <section class="panel panel-right">
+      <div class="canvas-container">
+        <canvas id="idea-canvas"></canvas>
+        <div class="canvas-caption">
+          <strong>Action radius</strong>
+          <span>Distance shows age, size shows relevance, direction shows idea vector.</span>
+        </div>
       </div>
     </section>
-
-    <section class="canvas-panel">
-      <canvas id="idea-canvas"></canvas>
-    </section>
-
-    <footer>
-      <a href="/docs/index.html">Read the generated documentation</a>
-    </footer>
-  </div>
+  </main>
   <script src="/app.js"></script>
 </body>
 </html>
 """
 
-STYLES_CSS = """html, body { margin: 0; min-height: 100%; background: #070b17; color: #eef6ff; font-family: Inter, system-ui, sans-serif; }
-body { display: flex; justify-content: center; align-items: center; padding: 0; }
-.page { width: min(1200px, 100%); padding: 24px; box-sizing: border-box; }
-header { text-align: center; margin-bottom: 18px; }
-header h1 { font-size: clamp(2rem, 4vw, 3.6rem); margin: 0; letter-spacing: 0.04em; }
-header p { color: #aac8ff; margin: 12px auto; max-width: 42rem; line-height: 1.6; }
-.form-panel { display: grid; gap: 16px; margin-bottom: 18px; }
-#idea-form { display: grid; grid-template-columns: 1fr auto; gap: 12px; }
-#idea-input { border: 1px solid #2c3f6a; border-radius: 18px; padding: 14px 18px; background: rgba(255,255,255,0.08); color: #f8fcff; font-size: 1rem; }
-#idea-input:focus { outline: 2px solid #85b4ff; }
-#idea-form button { border: none; border-radius: 18px; padding: 14px 22px; background: #5a85ff; color: white; font-weight: 700; cursor: pointer; }
-#idea-form button:hover { background: #3b61e8; }
-.notes { color: #a9b7d6; font-size: 0.96rem; }
-.notes code { background: rgba(255,255,255,0.08); padding: 3px 6px; border-radius: 6px; }
-.canvas-panel { position: relative; min-height: 540px; background: radial-gradient(circle at center, rgba(105, 133, 255, 0.08), transparent 60%), linear-gradient(135deg, rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(45deg, rgba(255,255,255,0.03) 1px, transparent 1px); background-size: 32px 32px, 64px 64px, 64px 64px; border-radius: 30px; overflow: hidden; }
-canvas { width: 100%; height: 100%; display: block; }
-footer { margin-top: 18px; text-align: center; }
-footer a { color: #85b4ff; text-decoration: none; }
-footer a:hover { text-decoration: underline; }
+STYLES_CSS = """* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; font-family: Inter, system-ui, sans-serif; color: #e9f2ff; background: radial-gradient(circle at top left, #1f345a, #050912 55%); }
+.app-shell { display: grid; grid-template-columns: 380px 1fr; min-height: 100vh; }
+.panel { padding: 28px; }
+.panel-left { background: rgba(4, 12, 22, 0.95); border-right: 1px solid rgba(255,255,255,0.08); }
+.panel-right { position: relative; overflow: hidden; }
+h1 { margin-top: 0; font-size: clamp(2rem, 4vw, 3.2rem); }
+p { line-height: 1.7; color: #c5d8ff; }
+textarea { width: 100%; border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.10); background: rgba(255,255,255,0.05); color: #eef4ff; padding: 16px; resize: vertical; min-height: 130px; font-size: 1rem; }
+textarea:focus { outline: 2px solid rgba(126,153,255,0.8); }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+button { border: none; border-radius: 999px; padding: 12px 18px; background: linear-gradient(135deg, #6897ff, #3862f3); color: white; cursor: pointer; transition: transform 0.18s ease, filter 0.18s ease; }
+button:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.help-box { margin-top: 24px; padding: 18px; border-radius: 18px; background: rgba(18, 34, 62, 0.86); border: 1px solid rgba(255,255,255,0.08); }
+.help-box code { background: rgba(255,255,255,0.08); padding: 3px 6px; border-radius: 8px; }
+.status { margin-top: 22px; min-height: 1.6rem; color: #b5d6ff; }
+.canvas-container { width: 100%; height: 100vh; position: relative; }
+#idea-canvas { width: 100%; height: 100%; display: block; }
+.canvas-caption { position: absolute; left: 24px; bottom: 24px; background: rgba(2, 7, 16, 0.82); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 16px 18px; max-width: 320px; }
+.canvas-caption strong { display: block; margin-bottom: 6px; }
+@media (max-width: 900px) { .app-shell { grid-template-columns: 1fr; } .panel-left { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.08); } .canvas-container { height: calc(100vh - 420px); } }
 """
 
 APP_JS = """const canvas = document.getElementById('idea-canvas');
 const ctx = canvas.getContext('2d');
 const form = document.getElementById('idea-form');
 const input = document.getElementById('idea-input');
+const importButton = document.getElementById('import-button');
+const downloadButton = document.getElementById('download-button');
+const status = document.getElementById('status');
 let ideas = [];
 
 function resizeCanvas() {
-  canvas.width = canvas.clientWidth * devicePixelRatio;
-  canvas.height = canvas.clientHeight * devicePixelRatio;
-  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   draw();
 }
 
-function fetchIdeas() {
-  return fetch('/api/ideas').then(r => r.json()).then(data => { ideas = data; draw(); });
+function showStatus(message, isError = false) {
+  status.textContent = message;
+  status.style.color = isError ? '#ffadad' : '#b5d6ff';
 }
 
-function sendIdea(text) {
-  return fetch('/api/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-    .then(r => r.json())
-    .then(() => fetchIdeas());
+function fetchIdeas() {
+  return fetch('/api/ideas')
+    .then(response => response.json())
+    .then(data => { ideas = data; draw(); })
+    .catch(() => showStatus('Unable to load ideas.', true));
+}
+
+function submitIdea(text) {
+  return fetch('/api/ideas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  })
+    .then(response => {
+      if (!response.ok) throw new Error('Submit failed');
+      return response.json();
+    })
+    .then(() => {
+      showStatus('Thought shared.');
+      return fetchIdeas();
+    })
+    .catch(() => showStatus('Could not share the thought.', true));
+}
+
+function importJson(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const json = JSON.parse(reader.result);
+        const response = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ideas: json })
+        });
+        if (!response.ok) throw new Error('Import failed');
+        showStatus('Import completed.');
+        await fetchIdeas();
+        resolve();
+      } catch (error) {
+        showStatus('Invalid import file.', true);
+        reject(error);
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
 }
 
 form.addEventListener('submit', event => {
   event.preventDefault();
   const text = input.value.trim();
-  if (!text) return;
-  sendIdea(text);
+  if (!text) {
+    showStatus('Enter an idea first.', true);
+    return;
+  }
+  submitIdea(text);
   input.value = '';
-  input.focus();
 });
+
+downloadButton.addEventListener('click', () => {
+  fetch('/api/export')
+    .then(response => response.blob())
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ideas.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      showStatus('Export downloaded.');
+    })
+    .catch(() => showStatus('Export failed.', true));
+});
+
+importButton.addEventListener('click', () => {
+  const inputEl = document.createElement('input');
+  inputEl.type = 'file';
+  inputEl.accept = '.json';
+  inputEl.onchange = () => {
+    const file = inputEl.files[0];
+    if (!file) return;
+    importJson(file);
+  };
+  inputEl.click();
+});
+
+function drawBackground(width, height) {
+  ctx.save();
+  const grd = ctx.createRadialGradient(width * 0.25, height * 0.2, 10, width / 2, height / 2, Math.max(width, height));
+  grd.addColorStop(0, 'rgba(125, 160, 255, 0.18)');
+  grd.addColorStop(1, 'rgba(7, 12, 24, 0.98)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 12; i++) {
+    ctx.beginPath();
+    ctx.arc(width / 2, height / 2, (Math.min(width, height) / 2) * (i / 12), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  for (let x = 0; x < width; x += 100) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+  for (let y = 0; y < height; y += 100) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 
 function draw() {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   ctx.clearRect(0, 0, width, height);
+  drawBackground(width, height);
 
   const center = { x: width / 2, y: height / 2 };
-  const radius = Math.min(width, height) * 0.3;
+  ideas.forEach(item => {
+    const age = Math.min(1, ((Date.now() / 1000) - new Date(item.created_at).getTime() / 1000) / 3600);
+    const distance = 80 + age * (Math.min(width, height) / 2 - 140);
+    const [dx, dy] = item.direction;
+    const x = center.x + dx * distance;
+    const y = center.y + dy * distance;
+    const radius = 18 + item.relevance * 48;
 
-  ctx.save();
-  ctx.translate(center.x, center.y);
-
-  // action radius rings
-  ctx.strokeStyle = 'rgba(133, 180, 255, 0.24)';
-  ctx.lineWidth = 1.5;
-  for (let i = 1; i <= 3; i++) {
+    const bubble = ctx.createRadialGradient(x - radius * 0.2, y - radius * 0.2, 4, x, y, radius);
+    bubble.addColorStop(0, 'rgba(255, 255, 255, 0.96)');
+    bubble.addColorStop(1, 'rgba(80, 145, 255, 0.18)');
+    ctx.fillStyle = bubble;
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.arc(0, 0, radius * i / 3, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  // central hub
-  ctx.fillStyle = 'rgba(94, 156, 255, 0.18)';
-  ctx.beginPath();
-  ctx.arc(0, 0, 16, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#d6e9ff';
-  ctx.font = '700 14px Inter, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('YOU', 0, 5);
-
-  const now = Date.now();
-  ideas.forEach(idea => {
-    const ageSeconds = Math.max(1, (now - new Date(idea.created_at).getTime()) / 1000);
-    const ageFactor = Math.min(1, ageSeconds / 1800);
-    const distance = radius * (0.2 + 0.8 * ageFactor);
-    const [dx, dy] = idea.direction;
-    const x = dx * distance;
-    const y = dy * distance;
-    const size = 18 + idea.relevance * 50;
-
-    const gradient = ctx.createRadialGradient(x - size * 0.2, y - size * 0.2, size * 0.2, x, y, size);
-    gradient.addColorStop(0, 'rgba(205, 232, 255, 0.95)');
-    gradient.addColorStop(1, 'rgba(86, 141, 255, 0.16)');
-
-    ctx.fillStyle = gradient;
-    ctx.strokeStyle = 'rgba(255,255,255,0.32)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = '#0f2140';
-    ctx.font = `600 ${Math.max(10, Math.min(16, size * 0.35))}px Inter, sans-serif`;
+    ctx.fillStyle = '#0d203d';
+    ctx.font = `600 ${Math.max(10, Math.min(14, radius * 0.35))}px Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const label = idea.text.length > 18 ? idea.text.slice(0, 15) + '…' : idea.text;
+    const label = item.text.length > 18 ? item.text.slice(0, 15) + '…' : item.text;
     ctx.fillText(label, x, y);
   });
-
-  ctx.restore();
 }
 
 window.addEventListener('resize', resizeCanvas);
 fetchIdeas().then(resizeCanvas);
 """
 
-DOCS_INDEX_HTML = """<!doctype html>
+DOCS_INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8" />
   <title>Rural Idea Map Docs</title>
   <style>
     body { font-family: Inter, system-ui, sans-serif; margin: 2rem; background: #051022; color: #e6eefb; }
     a { color: #85b4ff; }
-    header { margin-bottom: 1.5rem; }
-    section { margin-top: 1.5rem; }
+    ul { list-style: none; padding-left: 0; }
+    li { margin-bottom: 0.85rem; }
     code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Rural Idea Map Documentation</h1>
-    <p>This documentation was generated by <code>run_ideas.py</code> and explains the installation and usage of the single-file app.</p>
-  </header>
-  <section>
-    <h2>Steps</h2>
-    <ul>
-      <li><a href="step-1.html">Step 1: Create the app and database</a></li>
-    </ul>
-  </section>
+  <h1>Rural Idea Map Documentation</h1>
+  <p>Learn how to run the single-file app, store ideas in one JSON file, and optionally use IPFS for backups.</p>
+  <ul>
+    <li><a href="step-1.html">Step 1: Start the app</a></li>
+    <li><a href="step-2.html">Step 2: Export and import the database</a></li>
+    <li><a href="step-3.html">Step 3: Visualization details</a></li>
+    <li><a href="step-4.html">Step 4: Optional IPFS backup</a></li>
+  </ul>
 </body>
 </html>
 """
 
-DOCS_STEP_1_HTML = """<!doctype html>
+DOCS_STEP_1_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Step 1: Initialize the Rural Idea Map</title>
+  <meta charset="UTF-8" />
+  <title>Step 1: Start the App</title>
   <style>
     body { font-family: Inter, system-ui, sans-serif; margin: 2rem; background: #051022; color: #e6eefb; }
-    h1 { margin-bottom: 0.25rem; }
-    code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
-    pre { background: rgba(255,255,255,0.06); padding: 1rem; border-radius: 12px; overflow-x: auto; }
     a { color: #85b4ff; }
+    pre { background: rgba(255,255,255,0.06); padding: 1rem; border-radius: 12px; overflow-x: auto; }
+    code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
   </style>
 </head>
 <body>
-  <h1>Step 1: Initialize the Rural Idea Map</h1>
-  <p>This app runs from a single script and stores ideas in one JSON database file.</p>
-  <h2>How to run</h2>
+  <h1>Step 1: Start the App</h1>
+  <p>First create a Python virtual environment in the project folder and install the minimal requirements:</p>
+  <pre><code>python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt</code></pre>
+  <p>Then run the app from the single Python file:</p>
   <pre><code>python run_ideas.py</code></pre>
-  <p>Then open <code>http://localhost:5000</code> in your browser.</p>
-  <h2>Database file</h2>
-  <p>The app stores ideas in <code>ideas.json</code>. You can export or import it as a complete file:</p>
-  <pre><code>python run_ideas.py --export
-python run_ideas.py --import ideas.json</code></pre>
-  <p>If the file does not exist, the script will create it automatically.</p>
-  <p><a href="index.html">Back to docs index</a></p>
+  <p>Open <code>http://127.0.0.1:5000</code> in your browser.</p>
+  <p>The app writes the JSON database file <code>ideas.json</code> and generates the <code>docs/</code> folder.</p>
+  <p><a href="index.html">Back to docs home</a></p>
 </body>
 </html>
 """
+
+DOCS_STEP_2_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Step 2: Export and Import</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; margin: 2rem; background: #051022; color: #e6eefb; }
+    a { color: #85b4ff; }
+    pre { background: rgba(255,255,255,0.06); padding: 1rem; border-radius: 12px; overflow-x: auto; }
+    code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Step 2: Export and Import</h1>
+  <p>The app uses a single JSON file: <code>ideas.json</code>.</p>
+  <p>Export the database from the command line:</p>
+  <pre><code>python run_ideas.py --export exported-ideas.json</code></pre>
+  <p>Import a saved file:</p>
+  <pre><code>python run_ideas.py --import exported-ideas.json</code></pre>
+  <p>You can also import the same JSON file from the browser interface.</p>
+  <p><a href="index.html">Back to docs home</a></p>
+</body>
+</html>
+"""
+
+DOCS_STEP_3_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Step 3: Visualization</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; margin: 2rem; background: #051022; color: #e6eefb; }
+    a { color: #85b4ff; }
+    ul { padding-left: 1.2rem; }
+  </style>
+</head>
+<body>
+  <h1>Step 3: Visualization</h1>
+  <p>The app draws an abstract map-like background and an action radius around the center.</p>
+  <ul>
+    <li><strong>Distance</strong> is based on the time since the idea was created.</li>
+    <li><strong>Size</strong> reflects the idea's relevance.</li>
+    <li><strong>Direction</strong> is derived from the idea text.</li>
+  </ul>
+  <p>This gives each thought a floating bubble shape, like soap and chemistry bubbles on a map.</p>
+  <p><a href="index.html">Back to docs home</a></p>
+</body>
+</html>
+"""
+
+DOCS_STEP_4_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Step 4: Optional IPFS Backup</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; margin: 2rem; background: #051022; color: #e6eefb; }
+    a { color: #85b4ff; }
+    pre { background: rgba(255,255,255,0.06); padding: 1rem; border-radius: 12px; overflow-x: auto; }
+    code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Step 4: Optional IPFS Backup</h1>
+  <p>If you have IPFS installed and a local daemon running, export or import the database using IPFS.</p>
+  <pre><code>python run_ideas.py --export-ipfs
+python run_ideas.py --import-ipfs Qm...hash</code></pre>
+  <p>If IPFS is unavailable, the app still works with the local <code>ideas.json</code> file.</p>
+  <p><a href="index.html">Back to docs home</a></p>
+</body>
+</html>
+"""
+
+
+def write_doc(path, content):
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
 
 
 def ensure_docs():
     os.makedirs(DOCS_DIR, exist_ok=True)
-    write_if_missing(os.path.join(DOCS_DIR, 'index.html'), DOCS_INDEX_HTML)
-    write_if_missing(os.path.join(DOCS_DIR, 'step-1.html'), DOCS_STEP_1_HTML)
-
-
-def write_if_missing(path, content):
-    if not os.path.exists(path):
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(content)
+    write_doc(os.path.join(DOCS_DIR, 'index.html'), DOCS_INDEX_HTML)
+    write_doc(os.path.join(DOCS_DIR, 'step-1.html'), DOCS_STEP_1_HTML)
+    write_doc(os.path.join(DOCS_DIR, 'step-2.html'), DOCS_STEP_2_HTML)
+    write_doc(os.path.join(DOCS_DIR, 'step-3.html'), DOCS_STEP_3_HTML)
+    write_doc(os.path.join(DOCS_DIR, 'step-4.html'), DOCS_STEP_4_HTML)
 
 
 def load_db():
@@ -262,24 +423,84 @@ def save_db(data):
 
 
 def make_idea(text):
-    created_at = datetime.datetime.utcnow().isoformat() + 'Z'
+    created_at = datetime.utcnow().isoformat() + 'Z'
     relevance = max(0.10, min(1.0, 1.0 - len(text) / 180 + 0.15))
     digest = hashlib.sha256(text.encode('utf-8')).digest()
     dx = (digest[0] - 128) / 128
     dy = (digest[1] - 128) / 128
-    length = (dx * dx + dy * dy) ** 0.5
-    if length < 0.25:
-        dx, dy = 0.7, 0.3
-    else:
-        dx /= length
-        dy /= length
+    length = max((dx * dx + dy * dy) ** 0.5, 0.0001)
+    dx /= length
+    dy /= length
     return {
-        'id': hashlib.sha1(f"{text}-{created_at}".encode('utf-8')).hexdigest(),
+        'id': hashlib.sha1(f'{text}-{created_at}'.encode('utf-8')).hexdigest(),
         'text': text,
         'created_at': created_at,
         'relevance': round(relevance, 3),
         'direction': [round(dx, 4), round(dy, 4)],
     }
+
+
+def run_command(command):
+    try:
+        return subprocess.check_output(command, stderr=subprocess.STDOUT, cwd=BASE_DIR).decode('utf-8').strip()
+    except Exception:
+        return None
+
+
+def ipfs_available():
+    return run_command(['ipfs', 'version']) is not None
+
+
+def ipfs_add(path):
+    return run_command(['ipfs', 'add', '-Q', path])
+
+
+def ipfs_cat(cid):
+    return run_command(['ipfs', 'cat', cid])
+
+
+def export_db(path):
+    data = load_db()
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    print(f'Exported {len(data)} ideas to {path}')
+
+
+def import_db(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError('Import file must contain a JSON array')
+    save_db(data)
+    print(f'Imported {len(data)} ideas from {path}')
+
+
+def export_ipfs():
+    if not ipfs_available():
+        print('IPFS is not available. Install IPFS and run a local IPFS daemon.')
+        return
+    if not os.path.exists(DB_FILE):
+        save_db([])
+    cid = ipfs_add(DB_FILE)
+    if cid:
+        print(f'Exported ideas.json to IPFS with CID: {cid}')
+    else:
+        print('Failed to export to IPFS.')
+
+
+def import_ipfs(cid):
+    if not ipfs_available():
+        print('IPFS is not available. Install IPFS and run a local IPFS daemon.')
+        return
+    content = ipfs_cat(cid)
+    if content is None:
+        print('Failed to fetch content from IPFS.')
+        return
+    data = json.loads(content)
+    if not isinstance(data, list):
+        raise ValueError('IPFS content is not a JSON array')
+    save_db(data)
+    print(f'Imported {len(data)} ideas from IPFS CID {cid}')
 
 
 class IdeaHandler(http.server.SimpleHTTPRequestHandler):
@@ -302,7 +523,7 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-        if path == '/' or path == '/index.html':
+        if path in ('/', '/index.html'):
             self.send_text(INDEX_HTML)
             return
         if path == '/styles.css':
@@ -324,8 +545,6 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        if path.startswith('/docs/'):
-            return super().do_GET()
         return super().do_GET()
 
     def do_POST(self):
@@ -352,10 +571,11 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
         if path == '/api/import':
             try:
                 payload = json.loads(body)
-                if not isinstance(payload, list):
-                    raise ValueError('Expected array')
-                save_db(payload)
-                self.send_json({'status': 'imported', 'count': len(payload)})
+                ideas = payload if isinstance(payload, list) else payload.get('ideas')
+                if not isinstance(ideas, list):
+                    raise ValueError('Expected a list of ideas')
+                save_db(ideas)
+                self.send_json({'status': 'imported', 'count': len(ideas)})
             except Exception:
                 self.send_response(400)
                 self.end_headers()
@@ -368,30 +588,14 @@ class IdeaHandler(http.server.SimpleHTTPRequestHandler):
 def run_server(port):
     os.chdir(BASE_DIR)
     handler = IdeaHandler
-    with socketserver.TCPServer(("", port), handler) as httpd:
-        print(f"Serving Rural Idea Map at http://127.0.0.1:{port}")
-        print(f"Database file: {DB_FILE}")
-        print("Press Ctrl+C to stop.")
+    with socketserver.ThreadingTCPServer((HOST, port), handler) as httpd:
+        print(f'Serving Rural Idea Map at http://{HOST}:{port}')
+        print(f'Database file: {DB_FILE}')
+        print('Press Ctrl+C to stop.')
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            print("\nShutting down.")
-
-
-def export_db(path):
-    data = load_db()
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    print(f"Exported {len(data)} ideas to {path}")
-
-
-def import_db(path):
-    with open(path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    if not isinstance(data, list):
-        raise ValueError('Import file must contain a JSON array')
-    save_db(data)
-    print(f"Imported {len(data)} ideas from {path}")
+            print('\nShutting down.')
 
 
 def main():
@@ -399,7 +603,9 @@ def main():
     parser.add_argument('--port', type=int, default=PORT, help='Port to run the web server on')
     parser.add_argument('--export', nargs='?', const='ideas-export.json', help='Export the JSON database to a file')
     parser.add_argument('--import', dest='import_file', help='Import the JSON database from a file')
-    parser.add_argument('--init-docs', action='store_true', help='Create documentation files')
+    parser.add_argument('--export-ipfs', action='store_true', help='Export the database to IPFS')
+    parser.add_argument('--import-ipfs', dest='import_ipfs', help='Import the database from an IPFS CID')
+    parser.add_argument('--init-docs', action='store_true', help='Create documentation files and exit')
     args = parser.parse_args()
 
     ensure_docs()
@@ -409,6 +615,15 @@ def main():
         return
     if args.export is not None:
         export_db(os.path.abspath(args.export))
+        return
+    if args.export_ipfs:
+        export_ipfs()
+        return
+    if args.import_ipfs:
+        import_ipfs(args.import_ipfs)
+        return
+    if args.init_docs:
+        print('Documentation files created.')
         return
 
     if not os.path.exists(DB_FILE):
