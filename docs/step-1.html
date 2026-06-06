@@ -1,31 +1,25 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Step 1: Initialize the Rural Idea Map</title>
+  <meta charset="UTF-8" />
+  <title>Step 1: Start the App</title>
   <style>
     body { font-family: Inter, system-ui, sans-serif; margin: 2rem; background: #051022; color: #e6eefb; }
-    h1 { margin-bottom: 0.25rem; }
-    code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
-    pre { background: rgba(255,255,255,0.06); padding: 1rem; border-radius: 12px; overflow-x: auto; }
     a { color: #85b4ff; }
+    pre { background: rgba(255,255,255,0.06); padding: 1rem; border-radius: 12px; overflow-x: auto; }
+    code { background: rgba(255,255,255,0.08); padding: 0.2rem 0.4rem; border-radius: 5px; }
   </style>
 </head>
 <body>
-  <h1>Step 1: Initialize the Rural Idea Map</h1>
-  <p>This app runs from a single script and stores ideas in one JSON database file.</p>
-  <h2>Create the virtual environment</h2>
+  <h1>Step 1: Start the App</h1>
+  <p>First create a Python virtual environment in the project folder and install the minimal requirements:</p>
   <pre><code>python -m venv .venv
-.venv\Scripts\Activate.ps1
+.venv/Scripts/Activate.ps1
 pip install -r requirements.txt</code></pre>
-  <h2>How to run</h2>
+  <p>Then run the app from the single Python file:</p>
   <pre><code>python run_ideas.py</code></pre>
-  <p>Then open <code>http://localhost:5000</code> in your browser.</p>
-  <h2>Database file</h2>
-  <p>The app stores ideas in <code>ideas.json</code>. You can export or import it as a complete file:</p>
-  <pre><code>python run_ideas.py --export
-python run_ideas.py --import ideas.json</code></pre>
-  <p>If the file does not yet exist, the script will create it automatically.</p>
-  <p><a href="index.html">Back to docs index</a></p>
+  <p>Open <code>http://127.0.0.1:5000</code> in your browser.</p>
+  <p>The app writes the JSON database file <code>ideas.json</code> and generates the <code>docs/</code> folder.</p>
+  <p><a href="index.html">Back to docs home</a></p>
 </body>
 </html>
